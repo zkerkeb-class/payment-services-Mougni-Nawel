@@ -1,23 +1,64 @@
-// middlewares/auth.js
-const jwt = require('jsonwebtoken');
-const User = require('../models/user');
+const axios = require("axios")
+const jwt = require("jsonwebtoken")
 
+const JWT_SECRET = process.env.JWT_SECRET
+const BDD_SERVICE_URL = process.env.BDD_SERVICE_URL
 
-module.exports = async (req, res, next) => {
+const authenticate = async (req, res, next) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
+    const token = req.headers.authorization && req.headers.authorization.split(" ")[1]
 
-    if (!token) return res.status(401).json({ error: 'Unauthorized' });
+    if (!token) {
+      return res.status(401).json({
+        success: false,
+        message: "Token requis",
+      })
+    }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    // Vérifier le token JWT
+    const decoded = jwt.verify(token, JWT_SECRET)
 
-    req.user = await User.findById(decoded.id);
-    console.log('tete : ', req.user);
+    // Récupérer l'utilisateur depuis la BDD
+    const userResponse = await axios.get(`${BDD_SERVICE_URL}/api/user/${decoded.id}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json",
+      },
+      timeout: 10000,
+      validateStatus: (status) => status >= 200 && status < 500,
+    })
 
-    if (!req.user) return res.status(401).json({ error: 'User not found' });
+    if (userResponse.status !== 200 || !userResponse.data.success) {
+      return res.status(401).json({
+        success: false,
+        message: "Utilisateur non trouvé",
+      })
+    }
 
-    next();
-  } catch (err) {
-    res.status(401).json({ error: 'Invalid token' });
+    req.user = userResponse.data.data
+    next()
+  } catch (error) {
+    console.error("Erreur authentification:", error)
+
+    if (error.name === "TokenExpiredError") {
+      return res.status(401).json({
+        success: false,
+        message: "Token expiré",
+      })
+    }
+
+    if (error.code === "ECONNREFUSED") {
+      return res.status(503).json({
+        success: false,
+        message: "Service BDD indisponible",
+      })
+    }
+
+    res.status(500).json({
+      success: false,
+      message: "Erreur d'authentification",
+    })
   }
-};
+}
+
+module.exports = authenticate

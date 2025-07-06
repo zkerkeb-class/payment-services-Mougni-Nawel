@@ -1,152 +1,185 @@
-const express = require('express');
-const helmet = require('helmet');
-const timeout = require('express-timeout-handler');
-const mongoose = require('mongoose');
-// const dotenv = require('dotenv');
-const http = require('http');
-const cors = require('cors');
-// require('dotenv').config({ path: '../.env.dev' });
-const path = require('path');
-require('dotenv').config({ path: path.resolve(__dirname, '../.env.dev') });
-const router = require('./routes/index.js');
-const { initializeMetrics, metricsRouter, metricsMiddleware } = require('./utils/metrics');
+const express = require("express")
+const helmet = require("helmet")
+const timeout = require("express-timeout-handler")
+const cors = require("cors")
+const path = require("path")
+require("dotenv").config({ path: path.resolve(__dirname, "../.env.dev") })
 
+// Import des dépendances internes
+const routes = require("./routes")
+const { initializeMetrics, metricsRouter, metricsMiddleware } = require("./utils/metrics")
+const logger = require("./utils/logger")
 
+// Configuration initiale
+const app = express()
+const SERVICE_NAME = "payment-service"
+const PORT = process.env.PORT
 
-const logger = require('./utils/logger.js');
-
-
-const app = express();
-const port = 8015;
-app.use(helmet());
-
-app.use(express.json()); // Pour parser le JSON dans les requêtes
-app.use(express.urlencoded({ extended: true })); // Pour parser les données de formulaire
-
-// Set up CORS options
-const corsOptions = {
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-};
-const io = new http.Server(app, {
-  cors: corsOptions,
-});
-
-
-// Enable CORS
-app.use(cors(corsOptions));
-
-// 🔧 INITIALISATION DES MÉTRIQUES (OBLIGATOIRE)
-initializeMetrics('authentification');
-
-// 📊 MIDDLEWARE MÉTRIQUES (avant les autres middlewares)
-app.use(metricsMiddleware);
-
-// 🛣️ ROUTES MÉTRIQUES
-app.use(metricsRouter);
-
-// Gestion d'erreur globale avec métriques
-app.use((err, req, res, next) => {
-  const { recordError } = require('./utils/metrics');
-  recordError('unhandled_error', err);
-  res.status(500).json({ error: 'Internal Server Error' });
-});
-
-// Gestion des erreurs CSRF
-app.use((err, req, res, next) => {
-  if (err.code === 'EBADCSRFTOKEN') {
-    return res.status(403).json({ message: 'Token CSRF invalide ou manquant.' });
-  }
-  next(err);
-});
-
-// Database connection function
-async function connectWithRetry() {
-  const pRetry = (await import('p-retry')).default;
-  return pRetry(
-    () =>
-      mongoose.connect(process.env.MONGO_URI, {
-        useNewUrlParser: true,
-        useUnifiedTopology: true,
-        connectTimeoutMS: 5000,
-        socketTimeoutMS: 45000,
-      }),
-    {
-      retries: 3,
-      onFailedAttempt: (error) => {
-        logger.info(`Tentative ${error.attemptNumber} échouée. Erreur: ${error.message}`);
-      },
+// 1. Middlewares de sécurité renforcés pour les paiements
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", "js.stripe.com"],
+      frameSrc: ["'self'", "js.stripe.com"],
+      styleSrc: ["'self'", "'unsafe-inline'", "fonts.googleapis.com"],
+      imgSrc: ["'self'", "data:", "*.stripe.com"],
+      connectSrc: ["'self'", "*.stripe.com"],
     }
-  );
-}
-
-// Configuration de la sauvegarde
-const backupConfig = {
-  containerName: process.env.AZURE_CONTAINER_NAME_BACKUP, // Nom du conteneur Azure
-  notificationUrl: process.env.NOTIFICATION_URL, // URL de notification (ntfy.sh)
-};
-
-// Application initialization function
-const initializeApp = async () => {
-  try {
-    // Step 1: Connect to the database
-    await connectWithRetry()
-      .then(() => logger.info('Connecté à MongoDB'))
-      .catch((err) => logger.error(`Impossible de se connecter après 3 tentatives. ${err}`, err));
-    mongoose.set('debug', true); // Temps d'exécution des requêtes de base de données
-
-   
-
-    
-
-    logger.info('Application initialisée avec succès');
-  } catch (error) {
-    logger.error('Initialization failed:', error);
   }
-};
+}))
 
-app.use(express.json());
-// app.use(trackBandwidth);
-// app.use(trackSuccessFailure);
-app.use('/api', router);
+// 2. Configuration CORS sécurisée
+const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",") || []
+app.use(cors({
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin) || process.env.NODE_ENV === "development") {
+      callback(null, true)
+    } else {
+      callback(new Error("Origin not allowed by CORS"))
+    }
+  },
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization", "Stripe-Signature"],
+  credentials: true
+}))
+
+// 3. Middleware spécial pour les webhooks Stripe (doit être avant express.json)
+app.use("/api/stripe/webhook", express.raw({ type: "application/json" }))
+
+// 4. Middlewares de parsing standard
+app.use(express.json({ 
+  limit: "10mb",
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString() // Important pour la vérification des signatures
+  }
+}))
+app.use(express.urlencoded({ extended: true }))
+
+// 5. Métriques avec tags spécifiques aux paiements
+initializeMetrics()
+app.use(metricsMiddleware)
+app.use(metricsRouter)
+
+// 6. Routes principales
+app.use("/api", routes)
+
+// 7. Health Check avec vérification des clés Stripe
+app.get("/health", (req, res) => {
+  const stripeConfigured = !!process.env.STRIPE_SECRET_KEY
+  const status = stripeConfigured ? "UP" : "WARNING"
+  
+  res.json({
+    status,
+    service: SERVICE_NAME,
+    timestamp: new Date().toISOString(),
+    details: {
+      stripe: stripeConfigured ? "configured" : "not_configured",
+      environment: process.env.NODE_ENV || "development"
+    }
+  })
+})
+
+// 8. Endpoint de vérification de readiness
+app.get("/ready", (req, res) => {
+  const isReady = !!process.env.STRIPE_SECRET_KEY
+  res.status(isReady ? 200 : 503).json({
+    ready: isReady,
+    dependencies: {
+      stripe: isReady
+    }
+  })
+})
+
+// 9. Gestion des timeouts adaptée aux paiements
 app.use(
   timeout.handler({
-    timeout: 10000,
+    timeout: 15000, // Timeout plus long pour les opérations de paiement
     onTimeout: (res) => {
-      res.status(503).json({ error: 'Requête expirée, veuillez réessayer plus tard.' });
+      res.status(503).json({ 
+        error: "Timeout de traitement du paiement",
+        code: "payment_timeout",
+        suggestion: "Vérifiez votre connexion et réessayez"
+      })
     },
-    disable: ['write', 'setHeaders'], // Empêche de modifier les headers après timeout
+    disable: ["write", "setHeaders"],
   })
-);
-app.use((err, res) => {
-  if (err.code === 'ETIMEDOUT') {
-    return res.status(504).json({ error: 'Timeout serveur, veuillez réessayer plus tard.' });
+)
+
+// 10. Gestion des erreurs spécialisée pour les paiements
+app.use((err, req, res, next) => {
+  const { recordError } = require("./utils/metrics")
+  
+  // Enregistrement des métriques avec tags supplémentaires
+  const tags = {
+    path: req.path,
+    method: req.method,
+    payment_method: req.body?.payment_method || "unknown"
   }
-  logger.error(err);
-  res.status(500).json({ error: 'Erreur interne du serveur' });
-});
+  recordError("payment_error", err, tags)
+  
+  logger.error(`[${SERVICE_NAME}] Payment Error:`, {
+    error: err.message,
+    code: err.code,
+    user: req.user?.id || "anonymous",
+    path: req.path,
+    body: req.body
+  })
 
-// app.use(querycacheMiddleware);
-// app.use('/metrics', metricsRouter);
-const startServer = async () => {
-  initializeApp();
+  // Format standard pour les erreurs de paiement
+  const errorResponse = {
+    error: {
+      type: err.type || "PaymentError",
+      code: err.code || "payment_failed",
+      message: err.message || "Payment processing failed",
+      service: SERVICE_NAME,
+      timestamp: new Date().toISOString(),
+      retryable: err.retryable || false
+    }
+  }
 
-  // Start Express server
-  app.listen(port, () => {
-    logger.info(`Server running at http://localhost:${port}`);
-  });
-};
+  // Masquer les détails sensibles en production
+  if (process.env.NODE_ENV === "production") {
+    delete errorResponse.error.stack
+    delete errorResponse.error.details
+  }
 
-process.on('SIGINT', async () => {
+  res.status(err.status || 402).json(errorResponse) // 402 = Payment Required
+})
+
+// 11. Démarrage du serveur avec vérification des configurations
+const startServer = () => {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    logger.warn("Avertissement : STRIPE_SECRET_KEY non configuré")
+  }
+
+  const server = app.listen(PORT, () => {
+    logger.info(`🚀 ${SERVICE_NAME} démarré sur le port ${PORT}`)
+    logger.info(`💳 Mode Stripe : ${process.env.STRIPE_SECRET_KEY ? 'live' : 'test'}`)
+  })
+
+  return server
+}
+
+// 12. Graceful shutdown avec gestion des transactions en cours
+const shutdown = async () => {
+  logger.info("Fermeture du service de paiement...")
+  
   try {
-    await mongoose.connection.close();
-    logger.info('MongoDB connection closed');
-    process.exit(0);
+    // Ici vous pourriez ajouter la logique pour :
+    // - Compléter les transactions en cours
+    // - Fermer les connexions à Stripe
+    // - Envoyer les métriques finales
+    
+    process.exit(0)
   } catch (error) {
-    logger.error('Error during shutdown:', error);
-    process.exit(1);
+    logger.error("Erreur critique lors de la fermeture :", error)
+    process.exit(1)
   }
-});
+}
 
-startServer();
+process.on("SIGINT", shutdown)
+process.on("SIGTERM", shutdown)
+
+// Démarrer le serveur
+module.exports = startServer()
