@@ -1,0 +1,58 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20
+
+      - name: Créer .env.dev à partir des secrets
+        run: |
+          touch .env.dev
+          echo "secretOrPrivateKey=${{ secrets.secretOrPrivateKey }}" >> .env.dev
+          echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> .env.dev
+          echo "STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}" >> .env.dev
+          echo "ID_PRODUCT_PREMIUM=${{ secrets.ID_PRODUCT_PREMIUM }}" >> .env.dev
+          echo "ID_PRICE_PREMIUM=${{ secrets.ID_PRICE_PREMIUM }}" >> .env.dev
+          echo "FRONTEND_URL=${{ secrets.FRONTEND_URL }}" >> .env.dev
+          echo "STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}" >> .env.dev
+          echo "NODE_ENV=${{ secrets.NODE_ENV }}" >> .env.dev
+          echo "BDD_SERVICE_URL=${{ secrets.BDD_SERVICE_URL }}" >> .env.dev
+          echo "PORT=${{ secrets.PORT }}" >> .env.dev
+
+
+      - name: Install dependencies
+        if: hashFiles('package.json') != ''
+        run: npm install
+
+      - name: Set lowercase Docker user
+        run: echo "DOCKER_USER=$(echo ${{ github.actor }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+
+      - name: Build Docker image
+        run: |
+          docker build -t ghcr.io/${{ env.DOCKER_USER }}/payment:latest .
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Push Docker image
+        run: |
+          docker push ghcr.io/${{ env.DOCKER_USER }}/payment:latest
