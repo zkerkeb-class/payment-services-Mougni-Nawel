@@ -2,7 +2,6 @@ const axios = require('axios');
 
 module.exports = async (req, res, next) => {
   try {
-    // CORRECTION: Utiliser la bonne URL (sans 's' dans users)
     const response = await axios.get(`${process.env.BDD_SERVICE_URL}/api/user/${req.user._id}`, {
       headers: {
         'Authorization': `Bearer ${req.headers.authorization?.split(' ')[1]}`,
