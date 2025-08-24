@@ -35,14 +35,14 @@ const userSchema = new mongoose.Schema(
     stripeCustomerId: {
     type: String,
     unique: true,
-    sparse: true // Permet plusieurs null
+    sparse: true
   },
   subscriptionId: {
     type: String,
     unique: true,
     sparse: true
   },
-    analysisCount: { // Compteur d'analyses pour les free users
+    analysisCount: {
       type: Number,
       default: 0
     },
@@ -55,5 +55,4 @@ const userSchema = new mongoose.Schema(
   }
 );
 
-// Export the model directly
 module.exports = mongoose.models.User || mongoose.model('User', userSchema);
