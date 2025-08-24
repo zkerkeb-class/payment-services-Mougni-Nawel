@@ -11,7 +11,7 @@ const logger = pino({
       singleLine: true
     }
   },
-  level: 'info'  // minimumLevel should be at the root level
+  level: 'info'
 });
 
 module.exports = logger;

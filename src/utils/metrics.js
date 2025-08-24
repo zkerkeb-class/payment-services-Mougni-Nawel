@@ -1,16 +1,13 @@
-// utils/metrics.js - Configuration complète des métriques
 const client = require('prom-client');
 const express = require('express');
 const os = require('os');
 const fs = require('fs');
 
-// Configuration du registre avec préfixe par service
 let servicePrefix = '';
 
 function initializeMetrics(serviceName) {
   servicePrefix = serviceName;
   
-  // Collecte automatique des métriques par défaut (CPU, mémoire, etc.)
   const collectDefaultMetrics = client.collectDefaultMetrics;
   collectDefaultMetrics({ 
     timeout: 5000,
@@ -19,7 +16,6 @@ function initializeMetrics(serviceName) {
   });
 }
 
-// 📊 MÉTRIQUES PERSONNALISÉES
 
 // 1. Compteur de requêtes HTTP
 const httpRequestsTotal = new client.Counter({
@@ -123,7 +119,6 @@ const activeConnectionsGauge = new client.Gauge({
   labelNames: ['service']
 });
 
-// 🛠️ MIDDLEWARE
 function metricsMiddleware(req, res, next) {
   const startTime = Date.now();
   
@@ -159,7 +154,6 @@ function metricsMiddleware(req, res, next) {
   next();
 }
 
-// 🚀 ROUTER MÉTRIQUES
 const metricsRouter = express.Router();
 
 metricsRouter.get('/metrics', async (req, res) => {
@@ -172,7 +166,6 @@ metricsRouter.get('/metrics', async (req, res) => {
   }
 });
 
-// Endpoint pour les métriques de santé
 metricsRouter.get('/health', (req, res) => {
   res.json({
     status: 'ok',
@@ -184,7 +177,6 @@ metricsRouter.get('/health', (req, res) => {
   });
 });
 
-// 🎯 FONCTIONS UTILITAIRES
 
 function recordError(errorType, error) {
   errorCounter.labels(errorType, servicePrefix).inc();

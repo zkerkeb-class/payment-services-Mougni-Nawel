@@ -3,7 +3,6 @@ const router = express.Router()
 const stripeController = require("../controllers/subscription.controller")
 const authenticate = require("../middleware/auth")
 
-// Webhook (sans authentification)
 router.post("/webhook", express.raw({ type: "application/json" }), stripeController.handleWebhook)
 
 // Routes protégées

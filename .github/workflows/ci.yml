@@ -2,12 +2,13 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "deploy" ]
   pull_request:
     branches: [ "main" ]
 
 jobs:
   build-and-test:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
@@ -38,6 +39,28 @@ jobs:
         if: hashFiles('package.json') != ''
         run: npm install
 
+
+  deploy:
+    if: github.ref == 'refs/heads/deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Créer .env.dev pour le deploy
+        run: |
+          touch .env.dev
+          echo "secretOrPrivateKey=${{ secrets.secretOrPrivateKey }}" >> .env.dev
+          echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> .env.dev
+          echo "STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}" >> .env.dev
+          echo "ID_PRODUCT_PREMIUM=${{ secrets.ID_PRODUCT_PREMIUM }}" >> .env.dev
+          echo "ID_PRICE_PREMIUM=${{ secrets.ID_PRICE_PREMIUM }}" >> .env.dev
+          echo "FRONTEND_URL=${{ secrets.FRONTEND_URL }}" >> .env.dev
+          echo "STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}" >> .env.dev
+          echo "NODE_ENV=${{ secrets.NODE_ENV }}" >> .env.dev
+          echo "BDD_SERVICE_URL=${{ secrets.BDD_SERVICE_URL }}" >> .env.dev
+          echo "PORT=${{ secrets.PORT }}" >> .env.dev
+
       - name: Set lowercase Docker user
         run: echo "DOCKER_USER=$(echo ${{ github.actor }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
@@ -56,3 +79,7 @@ jobs:
       - name: Push Docker image
         run: |
           docker push ghcr.io/${{ env.DOCKER_USER }}/payment:latest
+
+
+
+      
